@@ -9,69 +9,61 @@ async def run():
         if not os.path.exists('data'): os.makedirs('data')
         
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
+        # Ustawiamy bardzo wysokie okno, żeby uniknąć problemów z przykrywaniem elementów
+        context = await browser.new_context(viewport={'width': 1920, 'height': 3000})
         page = await context.new_page()
         
         try:
             print("Wchodzę na stronę...")
             await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
             
-            # 1. WYMUSZAMY LIMIT 100 (Bez celowania myszką)
-            print("Wymuszam 100 per page...")
-            await page.evaluate("""
-                const select = document.querySelector('select.view-count-select');
-                if (select) {
-                    select.value = '100';
-                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            """)
-            
-            # Czekamy aż strona faktycznie przemieli te 100 wierszy
-            print("Czekam na dociągnięcie wierszy (do 15s)...")
-            await page.wait_for_function("document.querySelectorAll('table.ladderTable tbody tr').length > 20", timeout=15000)
+            # 1. SCROLL NA SAM DÓŁ
+            print("Scrolluję na dół do dropdowna...")
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(2000)
 
-            # 2. ODZNACZAMY CHECKBOX (Bez celowania myszką)
+            # 2. FIZYCZNE KLIKNIĘCIE W DROPDOWN I WYBÓR
+            print("Klikam fizycznie w wybór limitu...")
+            dropdown = page.locator('select.view-count-select')
+            # Kliknięcie wymusza focus i aktywację skryptów PoE
+            await dropdown.click()
+            await dropdown.select_option(value="100")
+            
+            # Czekamy na przeładowanie tabeli (musi być > 20 wierszy)
+            print("Czekam aż tabela 'puchnie' do 100 rekordów...")
+            await page.wait_for_function("document.querySelectorAll('table.ladderTable tbody tr').length > 20", timeout=20000)
+
+            # 3. POWRÓT NA GÓRĘ I ODZNACZENIE CHECKBOXA
             print("Włączam kolumnę Depth...")
-            await page.evaluate("""
-                const cb = document.querySelector('input[name="hide_delve"]');
-                if (cb) {
-                    cb.checked = false;
-                    cb.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            """)
+            await page.evaluate("window.scrollTo(0, 0)")
+            checkbox = page.locator('input[name="hide_delve"]')
+            await checkbox.set_checked(False)
             
-            # Czekamy na kolumnę w kodzie
-            await page.wait_for_selector('th[data-sort="depth"]', state="attached")
-
-            # 3. SORTUJEMY (Bez celowania myszką)
-            print("Wymuszam sortowanie po Depth...")
-            await page.evaluate("""
-                const depthHeader = document.querySelector('th[data-sort="depth"]');
-                if (depthHeader) {
-                    depthHeader.click(); // To jest JS-owy click, zawsze trafia
-                }
-            """)
+            # 4. SORTOWANIE (Kliknięcie w nagłówek)
+            print("Klikam w nagłówek Depth...")
+            header = page.locator('th[data-sort="depth"]')
+            await header.click()
             
-            # Czekamy na przeładowanie po sortowaniu
-            print("Finalna stabilizacja...")
+            # Dajemy czas na finalne przeładowanie danych
+            print("Finalne czekanie na dane...")
             await page.wait_for_timeout(5000)
 
-            # 4. POBIERAMY DANE
+            # 5. KOPIOWANIE TABELI
+            print("Kopiuję tabelę...")
             content = await page.content()
             dfs = pd.read_html(io.StringIO(content))
             df = next(d for d in dfs if 'Rank' in d.columns)
             
-            # Usuwamy puste kolumny (ikony)
+            # Czyścimy plik z ikon i pustych kolumn
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-            
-            # Zapisujemy do TSV
             df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
             
-            print(f"SUKCES! Plik ma {len(df)} rekordów.")
+            print(f"SUKCES! Mamy {len(df)} rekordów w pliku.")
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/debug_js_force.png")
+            # Jeśli bot znowu nie trafi, screen powie nam dokładnie gdzie był kursor
+            await page.screenshot(path="data/physical_click_debug.png")
             exit(1)
         finally:
             await browser.close()
