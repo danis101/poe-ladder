@@ -7,66 +7,56 @@ import os
 async def run():
     async with async_playwright() as p:
         if not os.path.exists('data'): os.makedirs('data')
-        
-        # Ustawiamy User-Agent, żeby strona nie traktowała nas jak "twardego" bota
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            viewport={'width': 1280, 'height': 2000},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-        )
+        context = await browser.new_context(viewport={'width': 1280, 'height': 2000})
         page = await context.new_page()
         
         try:
             print("1. Wchodzę na stronę...")
             await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
             
-            # --- KROK A: DROPDOWN ---
-            print("2. Próba ustawienia 100 osób...")
-            dropdown = page.locator('select.view-count-select')
-            await dropdown.scroll_into_view_if_needed()
+            # KROK 1: ODSŁANIANIE DEPTH (To co działało)
+            print("2. Odsłaniam kolumnę Depth...")
+            await page.get_by_label("Hide Delve Depth").uncheck()
             await page.wait_for_timeout(1000)
             
-            # Klikamy, żeby złapać focus (niebieska obwódka)
-            await dropdown.focus()
-            # Wybieramy opcję
-            await dropdown.select_option("100")
-            # Wysyłamy ręczny sygnał zmiany
-            await page.evaluate("document.querySelector('select.view-count-select').dispatchEvent(new Event('change', {bubbles: true}))")
-            
-            # CZEKAMY: To jest kluczowe. Nie robimy nic, dopóki nie zobaczymy Rank 21
-            print("Czekam na dociągnięcie 100 rekordów (strażnik)...")
-            try:
-                await page.wait_for_selector('tr:nth-child(21)', timeout=15000)
-                print("Sukces: Tabela ma 100 rekordów.")
-            except:
-                print("OSTRZEŻENIE: Tabela nadal krótka. Spróbujemy pobrać to co jest.")
-
-            # --- KROK B: SORTOWANIE (Dopiero teraz!) ---
-            print("3. Ustawianie widoku Depth...")
-            # Odznaczamy checkbox przez kliknięcie w label (bezpieczniejsze)
-            await page.get_by_text("Hide Delve Depth").click()
-            await page.wait_for_timeout(2000)
-            
-            print("4. Klikam w nagłówek Depth do sortowania...")
-            # Klikamy w nagłówek i czekamy na zmianę w URL lub przeładowanie
+            # KROK 2: SORTOWANIE (To też działało)
+            print("3. Sortuję po Depth...")
             await page.locator('th[data-sort="depth"]').click()
-            
-            # Finalne czekanie na ułożenie danych
-            print("Czekam na sortowanie...")
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(2000)
 
-            # --- KROK C: ZGRYWANIE ---
+            # KROK 3: WYBÓR 100 OSÓB (Tutaj dodajemy 'Enter' dla pewności)
+            print("4. Próbuję przełączyć na 100 per page...")
+            dropdown = page.locator('select.view-count-select')
+            await dropdown.scroll_into_view_if_needed()
+            
+            # Wybieramy 100 i symulujemy Enter, żeby strona "załapała" zmianę
+            await dropdown.select_option(value="100")
+            await dropdown.press("Enter") 
+            
+            # Czekamy aż tabela 'puchnie' (strażnik 20 rekordów)
+            print("5. Czekam na załadowanie danych...")
+            await page.wait_for_timeout(7000) 
+
+            # KROK 4: KOPIOWANIE TABELI (To co działało)
+            print("6. Kopiuję tabelę...")
             content = await page.content()
             dfs = pd.read_html(io.StringIO(content))
             df = next(d for d in dfs if 'Rank' in d.columns)
+            
+            # Czyścimy kolumny z obrazkami
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
             
+            # ZAPIS
             df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
-            print(f"ZAPISANO: {len(df)} rekordów.")
+            print(f"SUKCES! Zapisano {len(df)} rekordów.")
+
+            # Dodatkowy screen, żebyśmy wiedzieli co finalnie bot widział
+            await page.screenshot(path="data/final_view.png", full_page=True)
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/step_by_step_fail.png", full_page=True)
+            await page.screenshot(path="data/error.png")
         finally:
             await browser.close()
 
