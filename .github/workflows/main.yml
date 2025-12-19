@@ -2,16 +2,15 @@ name: Update PoE Ladder
 
 on:
   schedule:
-    - cron: '0 * * * *' # Co godzinę
-  workflow_dispatch: # Przycisk "Run workflow"
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    # DODANE: To daje botowi uprawnienia do zapisu plików w repo
     permissions:
       contents: write
-      
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -26,17 +25,17 @@ jobs:
           pip install pandas playwright lxml beautifulsoup4
           playwright install chromium
 
-      - name: Run script
+      - name: Run scraper
         run: python update_ladder.py
 
-      - name: Upload Debug Screenshot
+      - name: Upload Debug Screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
           path: data/*.png
+          if-no-files-found: ignore
 
-      # POPRAWIONE: Teraz ten krok jest idealnie pod 'Upload Debug Screenshot'
       - name: Commit and push
         run: |
           git config --global user.name "github-actions[bot]"
