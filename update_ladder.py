@@ -14,11 +14,14 @@ async def run():
         
         try:
             print("Wchodzę na stronę...")
-            # Wchodzimy od razu z parametrem limit=100 w URL - to pewniejsze niż klikanie
-            url = "https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100"
-            await page.goto(url, wait_until="networkidle")
+            # Wchodzimy na bazowy URL
+            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
             
-            # 1. Odznaczamy 'Hide Delve Depth' przez JS
+            # 1. Zmiana limitu na 100 przez dropdown (najpewniejsza metoda)
+            print("Ustawiam limit na 100 rekordów...")
+            await page.select_option('select.view-count-select', '100')
+            
+            # 2. Odznaczamy 'Hide Delve Depth' przez JS
             print("Wymuszam wyświetlenie Depth...")
             await page.evaluate("""
                 const cb = document.querySelector('input[name="hide_delve"]');
@@ -28,40 +31,41 @@ async def run():
                 }
             """)
             
-            # Czekamy na obecność kolumny w kodzie
-            await page.wait_for_selector('th[data-sort="depth"]', state="attached", timeout=15000)
-
-            # 2. WYMUSZAMY SORTOWANIE PRZEZ JS
-            # Zamiast klikać, wywołujemy skrypt strony odpowiedzialny za sortowanie
-            print("Wymuszam sortowanie po Depth...")
+            # 3. Wymuszamy sortowanie po Depth przez JS (żeby nie było problemu z "widocznością" nagłówka)
+            print("Sortuję po Depth...")
             await page.evaluate("""
                 const depthHeader = document.querySelector('th[data-sort="depth"]');
                 if (depthHeader) {
-                    depthHeader.click(); // JS-owy click nie potrzebuje widoczności elementu
+                    depthHeader.click();
                 }
             """)
-            
-            # Czekamy na przeładowanie danych po sortowaniu
-            print("Czekam na stabilizację danych...")
-            await page.wait_for_timeout(5000)
 
-            # 3. POBIERAMY DANE
+            # 4. KLUCZOWE: Czekamy, aż tabela będzie miała więcej niż 20 wierszy
+            print("Czekam na załadowanie pełnej listy 100 rekordów...")
+            await page.wait_for_function("""
+                () => document.querySelectorAll('table.ladderTable tbody tr').length > 20
+            """, timeout=20000)
+            
+            # Dodatkowa chwila na stabilizację danych
+            await page.wait_for_timeout(3000)
+
+            # 5. Pobieramy dane
             content = await page.content()
             dfs = pd.read_html(io.StringIO(content))
             df = next(d for d in dfs if 'Rank' in d.columns)
             
-            # Czyszczenie nagłówków z ikon i pustych kolumn
+            # Czyszczenie nagłówków
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
             
-            # Zapisujemy do TSV
+            # Zapis do TSV
             df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
             
             print(f"SUKCES! Pobrano {len(df)} wierszy.")
-            print(f"Kolumny: {list(df.columns)}")
+            print(f"Nagłówki: {list(df.columns)}")
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/debug_click_error.png")
+            await page.screenshot(path="data/debug_limit_error.png")
             exit(1)
         finally:
             await browser.close()
