@@ -8,46 +8,50 @@ async def run():
     async with async_playwright() as p:
         if not os.path.exists('data'): os.makedirs('data')
         
+        # Standardowe ustawienia, bez udziwnień
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
-        page = await context.new_page()
+        page = await browser.new_page()
         
         try:
             print("Wchodzę na stronę...")
-            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", wait_until="networkidle")
+            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", wait_until="load")
             
-            # DIAGNOSTYKA: Wypiszmy co bot widzi
-            inputs = await page.locator('input').count()
-            print(f"Znaleziono {inputs} elementów input na stronie.")
+            # Czekamy aż strona PoE załaduje swoje skrypty JS
+            await page.wait_for_timeout(3000)
 
-            # KLIKNIĘCIE: Szukamy elementu, który ma obok tekst ze screena
-            print("Próbuję odznaczyć 'Hide Delve Depth'...")
-            # Klikamy w etykietę (label) lub tekst - to zazwyczaj przełącza checkbox
-            await page.click('text="Hide Delve Depth"')
+            # WYMUSZENIE: Skoro widzimy to na screenie, to ten element ISTNIEJE.
+            # Używamy JavaScriptu, żeby go odznaczyć, bo JS nie obchodzi "klikalność" Playwrighta.
+            print("Wymuszam zmianę checkboxa...")
+            await page.evaluate("""
+                const checkbox = document.querySelector('input[name="hide_delve"]');
+                if (checkbox) {
+                    checkbox.checked = false;
+                    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            """)
             
-            # Czekamy na przeładowanie tabeli (nowe kolumny)
+            # Dajemy tabeli czas na dociągnięcie kolumny Depth
             await page.wait_for_timeout(5000)
 
-            # Sprawdzamy czy pojawiła się kolumna Depth
-            table_selector = 'table.ladderTable'
-            table_exists = await page.locator(table_selector).count()
-            
-            if table_exists > 0:
-                print("Tabela znaleziona. Wyciągam dane...")
-                html = await page.locator(table_selector).outer_html()
+            # Pobieramy tabelę
+            print("Próbuję odczytać tabelę...")
+            table = await page.query_selector('table.ladderTable')
+            if table:
+                html = await table.outer_html()
                 df = pd.read_html(io.StringIO(html))[0]
                 
-                # Zapis do pliku
+                # Zapisujemy do pliku
                 df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
-                print(f"Sukces! Kolumny w pliku: {list(df.columns)}")
+                
+                print(f"Sukces! Znalezione kolumny: {list(df.columns)}")
+                if 'Depth' in df.columns or any('Depth' in str(c) for c in df.columns):
+                    print("Kolumna Depth jest obecna!")
             else:
-                print("BŁĄD: Tabela nie znaleziona po kliknięciu.")
-                await page.screenshot(path="data/final_fail.png")
+                print("Nie znaleziono tabeli po odznaczeniu checkboxa.")
                 exit(1)
 
         except Exception as e:
-            print(f"WYJĄTEK: {e}")
-            await page.screenshot(path="data/exception.png")
+            print(f"Błąd: {e}")
             exit(1)
         finally:
             await browser.close()
