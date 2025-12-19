@@ -7,63 +7,56 @@ import os
 async def run():
     async with async_playwright() as p:
         if not os.path.exists('data'): os.makedirs('data')
-        
         browser = await p.chromium.launch(headless=True)
-        # Zwiększamy okno, żeby widzieć całą stopkę
-        context = await browser.new_context(viewport={'width': 1920, 'height': 2000})
+        # Ustawiamy bardzo wysoki viewport, żeby wymusić renderowanie
+        context = await browser.new_context(viewport={'width': 1280, 'height': 3000})
         page = await context.new_page()
         
         try:
             print("Wchodzę na stronę...")
             await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
             
-            # 1. SZUKAMY "20 per page" I KLIKAMY
-            print("Szukam napisu '20 per page' do kliknięcia...")
-            # Locator szuka elementu select, który zawiera tekst '20 per page'
-            dropdown_trigger = page.get_by_text("20 per page")
+            # 1. Fizyczny scroll kółkiem myszy na sam dół
+            print("Scrolluję na dół...")
+            await page.mouse.wheel(0, 5000)
+            await page.wait_for_timeout(3000)
             
-            # Przewijamy do niego fizycznie
-            await dropdown_trigger.scroll_into_view_if_needed()
-            await page.wait_for_timeout(1000)
-            
-            # Klikamy w dropdown i wybieramy 100
-            print("Wybieram 100 z listy...")
-            await page.select_option('select.view-count-select', label="100 per page")
-            
-            # Czekamy aż tabela "urośnie"
-            print("Czekam na załadowanie 100 rekordów...")
-            await page.wait_for_function("document.querySelectorAll('table.ladderTable tbody tr').length > 20", timeout=20000)
+            # 2. ROBIMY SCREENA CAŁEJ STRONY
+            print("Robię pełny zrzut ekranu do debugowania...")
+            await page.screenshot(path="data/debug_full_page.png", full_page=True)
 
-            # 2. ODZNACZANIE I SORTOWANIE (przez JS dla pewności trafienia)
-            print("Włączam kolumnę Depth i sortuję...")
+            # 3. Próba znalezienia i kliknięcia dropdownu (nawet jeśli bot twierdzi że nie widzi)
+            print("Próbuję wymusić limit 100 przez JS...")
             await page.evaluate("""
-                const cb = document.querySelector('input[name="hide_delve"]');
-                if (cb) {
-                    cb.checked = false;
-                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                const sel = document.querySelector('select.view-count-select');
+                if (sel) {
+                    sel.value = '100';
+                    sel.dispatchEvent(new Event('change', { bubbles: true }));
+                    console.log('JS: Zmieniono wartość na 100');
+                } else {
+                    console.log('JS: Nie znaleziono dropdownu!');
                 }
-                setTimeout(() => {
-                    const header = document.querySelector('th[data-sort="depth"]');
-                    if (header) header.click();
-                }, 2000);
             """)
             
-            # Finalna pauza na dociągnięcie posortowanych danych
-            await page.wait_for_timeout(6000)
-
-            # 3. ZAPIS DANYCH
-            content = await page.content()
-            dfs = pd.read_html(io.StringIO(content))
-            df = next(d for d in dfs if 'Rank' in d.columns)
-            df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-            df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
+            # Czekamy chwilę na reakcję strony
+            await page.wait_for_timeout(5000)
             
-            print(f"SUKCES! Mamy {len(df)} rekordów.")
+            # Sprawdzamy ile mamy wierszy
+            rows = await page.locator('table.ladderTable tbody tr').count()
+            print(f"Liczba wykrytych wierszy po zmianie: {rows}")
+
+            # 4. Jeśli mamy dane, zapisujemy
+            if rows > 0:
+                content = await page.content()
+                dfs = pd.read_html(io.StringIO(content))
+                df = next(d for d in dfs if 'Rank' in d.columns)
+                df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+                df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
+                print(f"Zapisano plik ({len(df)} wierszy).")
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/bot_search_text_error.png")
-            exit(1)
+            await page.screenshot(path="data/error_final.png")
         finally:
             await browser.close()
 
