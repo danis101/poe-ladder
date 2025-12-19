@@ -9,48 +9,69 @@ async def run():
         if not os.path.exists('data'):
             os.makedirs('data')
 
-        # Uruchamiamy przeglądarkę z polskim/europejskim User Agentem
+        # Uruchamiamy przeglądarkę z udawaniem prawdziwego użytkownika
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
         page = await context.new_page()
         
-        url = "https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100"
+        # URL z parametrem show_delve=1
+        url = "https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100&show_delve=1"
         print(f"Otwieram: {url}")
         
         try:
-            await page.goto(url, wait_until="load", timeout=60000)
+            # Wchodzimy na stronę
+            await page.goto(url, wait_until="networkidle", timeout=60000)
             
-            # Akceptujemy ciasteczka jeśli wyskoczą (częsty powód błędu na serwerach)
-            cookie_btn = await page.query_selector('button:has-text("Accept"), .btn-accept')
-            if cookie_btn: await cookie_btn.click()
+            # Czekamy chwilę na ewentualne banery
+            await page.wait_for_timeout(3000)
 
-            # 1. Odznaczamy Hide Delve (używając ID lub nazwy)
-            print("Klikam checkbox...")
-            await page.locator('input[name="hide_delve"]').evaluate("node => node.click()")
-            await page.wait_for_timeout(2000)
+            # 1. Próbujemy odznaczyć "Hide Delve Depth" klikając bezpośrednio w tekst obok checkboxa
+            print("Próbuję odznaczyć 'Hide Delve Depth'...")
+            try:
+                # Szukamy tekstu i klikamy w niego (to zazwyczaj przełącza powiązany checkbox)
+                await page.click('text="Hide Delve Depth"', timeout=10000)
+                print("Kliknięto w tekst 'Hide Delve Depth'.")
+            except:
+                print("Nie udało się kliknąć w tekst, próbuję bezpośrednio w checkbox...")
+                await page.locator('input[type="checkbox"]').first.click()
 
-            # 2. Sortujemy po głębokości
-            print("Sortuję tabelę...")
-            await page.locator('th.depth-column').click()
-            await page.wait_for_timeout(2000)
-            # Klikamy drugi raz dla pewności, by najwyższe wyniki były na górze
-            await page.locator('th.depth-column').click()
-            await page.wait_for_timeout(2000)
+            # Czekamy na przeładowanie tabeli
+            await page.wait_for_timeout(5000)
 
-            # 3. Wyciągamy dane
-            print("Pobieram kod HTML...")
-            table_html = await page.eval_on_selector('.ladderTable', "el => el.outerHTML")
-            
-            df = pd.read_html(io.StringIO(table_html))[0]
-            
-            # Zapisujemy plik
-            df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
-            print("Sukces! Plik został nadpisany nowymi danymi.")
+            # 2. Sortowanie po głębokości (kliknięcie w nagłówek 'Depth')
+            print("Sortuję po Depth...")
+            # Klikamy w nagłówek kolumny, który zawiera tekst 'Depth'
+            depth_header = page.locator('th:has-text("Depth")').first
+            await depth_header.click()
+            await page.wait_for_timeout(2000)
+            # Klikamy drugi raz, aby najwyższe wartości były na górze
+            await depth_header.click()
+            await page.wait_for_timeout(3000)
+
+            # 3. Pobieramy tabelę
+            print("Pobieram dane tabeli...")
+            table = await page.query_selector('.ladderTable')
+            if table:
+                html = await table.outer_html()
+                df = pd.read_html(io.StringIO(html))[0]
+                
+                # Czyszczenie danych
+                df = df.dropna(axis=1, how='all')
+                
+                # Zapis do TSV
+                df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
+                print("Sukces! Plik keepers-delve.tsv został zaktualizowany.")
+            else:
+                print("BŁĄD: Nie znaleziono tabeli .ladderTable")
+                await page.screenshot(path="data/error_page.png")
+                exit(1)
 
         except Exception as e:
-            print(f"BŁĄD: {e}")
-            # Robimy zrzut ekranu błędu, żebyś mógł go zobaczyć w plikach akcji (opcjonalnie)
-            await page.screenshot(path="error_screenshot.png")
+            print(f"BŁĄD KRYTYCZNY: {e}")
+            await page.screenshot(path="data/error_exception.png")
             exit(1)
         
         await browser.close()
