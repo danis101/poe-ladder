@@ -2,12 +2,16 @@ name: Update PoE Ladder
 
 on:
   schedule:
-    - cron: '0 * * * *' # Odpalaj co pełną godzinę
-  workflow_dispatch: # Pozwala odpalić ręcznie przyciskiem
+    - cron: '0 * * * *' # Co godzinę
+  workflow_dispatch: # Przycisk "Run workflow"
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    # DODANE: To daje botowi uprawnienia do zapisu plików w repo
+    permissions:
+      contents: write
+      
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -26,16 +30,17 @@ jobs:
         run: python update_ladder.py
 
       - name: Upload Debug Screenshot
-        if: always() # To sprawi, że wyśle screena nawet jak będzie błąd
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
           path: data/*.png
 
-    - name: Commit and push
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git add data/keepers-delve.tsv
-        git commit -m "Update ladder data" || echo "No changes to commit"
-        git push
+      # POPRAWIONE: Teraz ten krok jest idealnie pod 'Upload Debug Screenshot'
+      - name: Commit and push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/keepers-delve.tsv
+          git commit -m "Update ladder data" || echo "No changes to commit"
+          git push
