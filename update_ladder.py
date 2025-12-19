@@ -14,15 +14,29 @@ async def run():
         
         try:
             print("Wchodzę na stronę...")
-            # Wchodzimy na bazowy URL
             await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
             
-            # 1. Zmiana limitu na 100 przez dropdown (najpewniejsza metoda)
-            print("Ustawiam limit na 100 rekordów...")
-            await page.select_option('select.view-count-select', '100')
+            # 1. PRZEWIJANIE NA DÓŁ (Żeby wyrenderować dropdown limitu)
+            print("Przewijam na dół strony...")
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(2000)
+
+            # 2. ZMIANA LIMITU NA 100
+            print("Wymuszam limit 100 per page...")
+            # Szukamy selecta i zmieniamy mu wartość na 100
+            await page.evaluate("""
+                const select = document.querySelector('select.view-count-select');
+                if (select) {
+                    select.value = '100';
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            """)
             
-            # 2. Odznaczamy 'Hide Delve Depth' przez JS
-            print("Wymuszam wyświetlenie Depth...")
+            # Czekamy na przeładowanie listy do 100 wierszy
+            await page.wait_for_function("document.querySelectorAll('table.ladderTable tbody tr').length > 20", timeout=15000)
+
+            # 3. ODZNACZENIE 'Hide Delve Depth' (wracamy do góry lub robimy to przez JS)
+            print("Włączam kolumnę Depth...")
             await page.evaluate("""
                 const cb = document.querySelector('input[name="hide_delve"]');
                 if (cb) {
@@ -31,41 +45,33 @@ async def run():
                 }
             """)
             
-            # 3. Wymuszamy sortowanie po Depth przez JS (żeby nie było problemu z "widocznością" nagłówka)
-            print("Sortuję po Depth...")
-            await page.evaluate("""
-                const depthHeader = document.querySelector('th[data-sort="depth"]');
-                if (depthHeader) {
-                    depthHeader.click();
-                }
-            """)
+            # Czekamy na pojawienie się nagłówka Depth
+            await page.wait_for_selector('th[data-sort="depth"]', state="attached")
 
-            # 4. KLUCZOWE: Czekamy, aż tabela będzie miała więcej niż 20 wierszy
-            print("Czekam na załadowanie pełnej listy 100 rekordów...")
-            await page.wait_for_function("""
-                () => document.querySelectorAll('table.ladderTable tbody tr').length > 20
-            """, timeout=20000)
+            # 4. SORTOWANIE PO DEPTH
+            print("Sortuję po głębokości...")
+            await page.evaluate("document.querySelector('th[data-sort=\"depth\"]').click()")
             
-            # Dodatkowa chwila na stabilizację danych
-            await page.wait_for_timeout(3000)
+            # Finalne czekanie na odświeżenie danych
+            await page.wait_for_timeout(5000)
 
-            # 5. Pobieramy dane
+            # 5. POBIERANIE DANYCH
             content = await page.content()
             dfs = pd.read_html(io.StringIO(content))
             df = next(d for d in dfs if 'Rank' in d.columns)
             
-            # Czyszczenie nagłówków
+            # Czyścimy śmieciowe kolumny
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
             
-            # Zapis do TSV
+            # Zapisujemy do TSV
             df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
             
-            print(f"SUKCES! Pobrano {len(df)} wierszy.")
-            print(f"Nagłówki: {list(df.columns)}")
+            print(f"SUKCES! Zapisano {len(df)} rekordów.")
+            print(f"Kolumny: {list(df.columns)}")
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/debug_limit_error.png")
+            await page.screenshot(path="data/final_debug.png")
             exit(1)
         finally:
             await browser.close()
