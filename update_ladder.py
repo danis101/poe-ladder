@@ -10,18 +10,15 @@ async def run():
             os.makedirs('data')
         
         browser = await p.chromium.launch(headless=True)
-        # Ustawiamy standardową rozdzielczość
         context = await browser.new_context(viewport={'width': 1280, 'height': 720})
         page = await context.new_page()
         
         try:
             print("Otwieram stronę drabinki...")
             await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", wait_until="load")
-            
-            # Czekamy na załadowanie skryptów
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(2000)
 
-            print("Wymuszam odznaczenie 'Hide Delve Depth' przez JS...")
+            print("Odznaczam 'Hide Delve Depth'...")
             await page.evaluate("""
                 const cb = document.querySelector('input[name="hide_delve"]');
                 if (cb) {
@@ -30,36 +27,33 @@ async def run():
                 }
             """)
             
-            # CZEKANIE: Sprawdzamy stan 'attached' (obecność w kodzie), a nie 'visible'
-            print("Czekam na pojawienie się kolumny Depth w kodzie HTML...")
-            depth_header = page.locator('th:has-text("Depth")').first
-            await depth_header.wait_for(state="attached", timeout=20000)
+            # Czekamy aż kolumna Depth faktycznie się pojawi i zostanie w kodzie
+            print("Czekam na stabilizację tabeli...")
+            await page.wait_for_selector('th:has-text("Depth")', state="attached", timeout=20000)
+            # Kluczowe: czekamy chwilę, aż dane wierszy się dociągną pod nagłówek
+            await page.wait_for_timeout(3000)
 
-            # Dodatkowa sekunda na wyrenderowanie danych wierszy
-            await page.wait_for_timeout(2000)
-
-            print("Pobieram tabelę...")
-            # Pobieramy HTML bezpośrednio z DOM
-            table_html = await page.evaluate("document.querySelector('table.ladderTable').outerHTML")
+            # Pobieramy CAŁY kod HTML strony zamiast konkretnego elementu
+            # To eliminuje błąd "null" przy outerHTML
+            content = await page.content()
             
-            if table_html:
-                # Konwersja na DataFrame
-                df = pd.read_html(io.StringIO(table_html))[0]
-                
-                # Usuwamy kolumny bez nazw (ikony itp.)
-                df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-                
-                # Zapisujemy do TSV
-                df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
-                
-                print(f"SUKCES! Plik zapisany. Znalezione kolumny: {list(df.columns)}")
-            else:
-                print("BŁĄD: Nie znaleziono tabeli.")
-                exit(1)
+            print("Konwertuję dane...")
+            # Szukamy tabeli w całym kodzie strony
+            dfs = pd.read_html(io.StringIO(content))
+            
+            # Wybieramy tabelę, która ma kolumnę 'Rank' (to ta właściwa)
+            ladder_df = next(df for df in dfs if 'Rank' in df.columns)
+            
+            # Czyścimy zbędne kolumny (ikony/puste)
+            ladder_df = ladder_df.loc[:, ~ladder_df.columns.str.contains('^Unnamed')]
+            
+            # Zapisujemy do TSV
+            ladder_df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
+            
+            print(f"SUKCES! Zapisano kolumny: {list(ladder_df.columns)}")
 
         except Exception as e:
             print(f"WYJĄTEK: {e}")
-            # Zapisujemy screena dla 100% pewności
             await page.screenshot(path="data/final_debug.png")
             exit(1)
         finally:
