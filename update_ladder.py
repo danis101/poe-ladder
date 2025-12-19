@@ -5,33 +5,45 @@ import io
 
 async def run():
     async with async_playwright() as p:
-        # Uruchomienie przeglądarki
+        # Uruchamiamy przeglądarkę
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         
-        # Wejście na stronę
-        url = "https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100"
-        await page.goto(url)
+        # 1. Wejście na stronę
+        print("Wchodzę na stronę PoE...")
+        await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", timeout=60000)
         
-        # Czekamy na załadowanie tabeli
-        await page.wait_for_selector('.ladderTable')
-
-        # KLIKNIĘCIE: Odznaczamy checkbox "Hide Delve Depth"
-        # Na stronie PoE ten checkbox często ma id lub jest powiązany z tekstem
-        # Szukamy checkboxa, który jest zaznaczony (checked) i go klikamy
-        await page.click('input[name="hide_delve"]') 
-        
-        # Czekamy chwilę na przeładowanie danych przez skrypt PoE
+        # 2. Odznaczenie "Hide Delve Depth"
+        print("Odznaczam 'Hide Delve Depth'...")
+        await page.uncheck('input[name="hide_delve"]')
         await page.wait_for_timeout(2000)
 
-        # Pobieramy kod HTML tabeli po zmianach
-        table_html = await page.inner_html('.ladderTable')
+        # 3. Zmiana na 100 osób na stronę
+        print("Zmieniam widok na 100 osób...")
+        # Wybieramy wartość 100 z dropdowna na dole
+        await page.select_option('select.view-count-select', '100')
+        await page.wait_for_timeout(3000)
+
+        # 4. Sortowanie po Depth
+        # Klikamy w nagłówek "Depth", aby wymusić sortowanie po głębokości
+        print("Sortuję po Depth...")
+        await page.click('th.depth-column') 
+        await page.wait_for_timeout(3000)
         
-        # Konwertujemy HTML do DataFrame (pandas)
+        # Pobieramy tabelę po wszystkich zmianach
+        print("Pobieram dane...")
+        table_element = await page.query_selector('.ladderTable')
+        table_html = await table_element.inner_html()
+        
+        # Parsowanie HTML do DataFrame
         df = pd.read_html(io.StringIO(f"<table>{table_html}</table>"))[0]
         
-        # Zapisujemy do pliku TSV
+        # Czyścimy puste kolumny
+        df = df.dropna(axis=1, how='all')
+        
+        # Zapisujemy do pliku
         df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
+        print("Gotowe! Plik zapisany w data/keepers-delve.tsv")
         
         await browser.close()
 
