@@ -8,62 +8,66 @@ async def run():
     async with async_playwright() as p:
         if not os.path.exists('data'): os.makedirs('data')
         browser = await p.chromium.launch(headless=True)
-        # Ustawiamy viewport na taki, w którym na screenie widzieliśmy dropdown
-        context = await browser.new_context(viewport={'width': 1280, 'height': 2000})
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = await context.new_page()
         
         try:
-            print("Wchodzę na stronę...")
-            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
+            print("KROK 1: Wchodzę na stronę od razu z parametrem limitu...")
+            # Wymuszamy limit 100 bezpośrednio w URL i czekamy na pełne załadowanie sieci
+            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", wait_until="networkidle")
             
-            # 1. CZEKAMY NA DROPDOWN I KLIKAMY GO
-            print("Czekam aż '20 per page' będzie gotowe...")
-            # Czekamy aż selektor fizycznie pojawi się w kodzie
-            dropdown_selector = 'select.view-count-select'
-            await page.wait_for_selector(dropdown_selector, state="visible")
-            
-            # Przewijamy do niego
-            await page.locator(dropdown_selector).scroll_into_view_if_needed()
-            await page.wait_for_timeout(2000)
-
-            # 2. WYMUSZAMY ZMIANĘ PRZEZ JS + EVENT DISPATCH
-            # Na Twoim screenie widać, że on tam jest, więc JS go teraz na 100% złapie
-            print("Zmieniam limit na 100...")
+            # KROK 2: Upewniamy się, że dropdown pokazuje 100 (oszukujemy skrypt strony)
+            print("KROK 2: Synchronizuję stan dropdownu...")
             await page.evaluate("""
                 const sel = document.querySelector('select.view-count-select');
-                sel.value = '100';
-                sel.dispatchEvent(new Event('change', { bubbles: true }));
+                if(sel) {
+                    sel.value = '100';
+                    sel.dispatchEvent(new Event('change', { bubbles: true }));
+                }
             """)
-            
-            # 3. STRAŻNIK: Czekamy aż w tabeli pojawi się Rank 21
-            print("Czekam aż tabela się rozszerzy...")
-            # To sprawi, że bot nie ruszy dalej, póki nie zobaczy więcej niż 20 wierszy
-            await page.wait_for_function("document.querySelectorAll('table.ladderTable tbody tr').length > 20", timeout=20000)
+            await page.wait_for_timeout(3000)
 
-            # 4. DODATKI: DEPTH I SORTOWANIE
-            print("Odkrywam Depth i sortuję...")
+            # KROK 3: Odkrywamy Depth i sortujemy (przez JS, żeby nie 'pudłować')
+            print("KROK 3: Włączam Depth i sortuję...")
             await page.evaluate("""
-                document.querySelector('input[name="hide_delve"]').click();
+                const cb = document.querySelector('input[name="hide_delve"]');
+                if (cb && cb.checked) {
+                    cb.click();
+                }
                 setTimeout(() => {
-                    document.querySelector('th[data-sort="depth"]').click();
+                    const th = document.querySelector('th[data-sort="depth"]');
+                    if (th) th.click();
                 }, 1000);
             """)
             
-            await page.wait_for_timeout(5000)
+            # Czekamy aż tabela się "uspokoi"
+            print("Czekam na stabilizację danych...")
+            await page.wait_for_timeout(7000)
 
-            # 5. POBIERANIE DANYCH
+            # KROK 4: Pobieranie danych
+            print("KROK 4: Zgrywam dane...")
             content = await page.content()
             dfs = pd.read_html(io.StringIO(content))
+            
+            # Szukamy właściwej tabeli (tej z kolumną Rank)
             df = next(d for d in dfs if 'Rank' in d.columns)
+            
+            # Czyścimy puste kolumny z ikonami
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
             
-            # Zapisujemy finalny plik
-            df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
-            print(f"SUKCES! Mamy {len(df)} rekordów w pliku.")
+            # ZAPIS DO PLIKU (wymuszony)
+            file_path = 'data/keepers-delve.tsv'
+            df.to_csv(file_path, sep='\t', index=False)
+            
+            print(f"SUKCES! Plik zapisany: {file_path}")
+            print(f"Liczba wierszy: {len(df)}")
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/final_crash_debug.png", full_page=True)
+            await page.screenshot(path="data/error_save.png")
+            # Nawet jeśli jest błąd, spróbujemy zapisać to co mamy, żebyś nie miał pustego repo
+            if 'df' in locals():
+                df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
         finally:
             await browser.close()
 
