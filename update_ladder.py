@@ -14,10 +14,12 @@ async def run():
         
         try:
             print("Wchodzę na stronę...")
-            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
+            # Wchodzimy od razu z parametrem limit=100 w URL - to pewniejsze niż klikanie
+            url = "https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100"
+            await page.goto(url, wait_until="networkidle")
             
-            # 1. Odznaczamy 'Hide Delve Depth'
-            print("Odznaczam 'Hide Delve Depth'...")
+            # 1. Odznaczamy 'Hide Delve Depth' przez JS
+            print("Wymuszam wyświetlenie Depth...")
             await page.evaluate("""
                 const cb = document.querySelector('input[name="hide_delve"]');
                 if (cb) {
@@ -26,39 +28,40 @@ async def run():
                 }
             """)
             
-            # Czekamy na pojawienie się kolumny Depth
-            await page.wait_for_selector('th.sortable[data-sort="depth"]', state="attached")
-            await page.wait_for_timeout(2000)
+            # Czekamy na obecność kolumny w kodzie
+            await page.wait_for_selector('th[data-sort="depth"]', state="attached", timeout=15000)
 
-            # 2. KLIKAMY W NAGŁÓWEK DEPTH (Sortowanie)
-            print("Klikam w nagłówek Depth, aby posortować...")
-            # Klikamy dwukrotnie lub upewniamy się, że sortuje malejąco (od najgłębszego)
-            await page.click('th.sortable[data-sort="depth"]')
-            await page.wait_for_timeout(3000)
-
-            # 3. ZMIENIAMY LIMIT NA 100
-            print("Zmieniam limit na 100 osób...")
-            # Selektor dla dropdownu z wyborem liczby osób
-            await page.select_option('select.view-count-select', '100')
+            # 2. WYMUSZAMY SORTOWANIE PRZEZ JS
+            # Zamiast klikać, wywołujemy skrypt strony odpowiedzialny za sortowanie
+            print("Wymuszam sortowanie po Depth...")
+            await page.evaluate("""
+                const depthHeader = document.querySelector('th[data-sort="depth"]');
+                if (depthHeader) {
+                    depthHeader.click(); // JS-owy click nie potrzebuje widoczności elementu
+                }
+            """)
             
-            # Czekamy na załadowanie 100 rekordów
-            print("Czekam na załadowanie 100 rekordów...")
+            # Czekamy na przeładowanie danych po sortowaniu
+            print("Czekam na stabilizację danych...")
             await page.wait_for_timeout(5000)
 
-            # 4. POBIERAMY FINALNĄ TABELĘ
+            # 3. POBIERAMY DANE
             content = await page.content()
             dfs = pd.read_html(io.StringIO(content))
             df = next(d for d in dfs if 'Rank' in d.columns)
             
-            # Czyszczenie i zapis
+            # Czyszczenie nagłówków z ikon i pustych kolumn
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+            
+            # Zapisujemy do TSV
             df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
             
-            print(f"SUKCES! Zapisano {len(df)} rekordów. Kolumny: {list(df.columns)}")
+            print(f"SUKCES! Pobrano {len(df)} wierszy.")
+            print(f"Kolumny: {list(df.columns)}")
 
         except Exception as e:
             print(f"BŁĄD: {e}")
-            await page.screenshot(path="data/error_final_steps.png")
+            await page.screenshot(path="data/debug_click_error.png")
             exit(1)
         finally:
             await browser.close()
