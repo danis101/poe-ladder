@@ -6,18 +6,17 @@ import os
 
 async def run():
     async with async_playwright() as p:
-        if not os.path.exists('data'): 
-            os.makedirs('data')
+        if not os.path.exists('data'): os.makedirs('data')
         
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={'width': 1280, 'height': 720})
+        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = await context.new_page()
         
         try:
-            print("Otwieram stronę drabinki...")
-            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", wait_until="load")
-            await page.wait_for_timeout(2000)
-
+            print("Wchodzę na stronę...")
+            await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo", wait_until="networkidle")
+            
+            # 1. Odznaczamy 'Hide Delve Depth'
             print("Odznaczam 'Hide Delve Depth'...")
             await page.evaluate("""
                 const cb = document.querySelector('input[name="hide_delve"]');
@@ -27,34 +26,39 @@ async def run():
                 }
             """)
             
-            # Czekamy aż kolumna Depth faktycznie się pojawi i zostanie w kodzie
-            print("Czekam na stabilizację tabeli...")
-            await page.wait_for_selector('th:has-text("Depth")', state="attached", timeout=20000)
-            # Kluczowe: czekamy chwilę, aż dane wierszy się dociągną pod nagłówek
+            # Czekamy na pojawienie się kolumny Depth
+            await page.wait_for_selector('th.sortable[data-sort="depth"]', state="attached")
+            await page.wait_for_timeout(2000)
+
+            # 2. KLIKAMY W NAGŁÓWEK DEPTH (Sortowanie)
+            print("Klikam w nagłówek Depth, aby posortować...")
+            # Klikamy dwukrotnie lub upewniamy się, że sortuje malejąco (od najgłębszego)
+            await page.click('th.sortable[data-sort="depth"]')
             await page.wait_for_timeout(3000)
 
-            # Pobieramy CAŁY kod HTML strony zamiast konkretnego elementu
-            # To eliminuje błąd "null" przy outerHTML
+            # 3. ZMIENIAMY LIMIT NA 100
+            print("Zmieniam limit na 100 osób...")
+            # Selektor dla dropdownu z wyborem liczby osób
+            await page.select_option('select.view-count-select', '100')
+            
+            # Czekamy na załadowanie 100 rekordów
+            print("Czekam na załadowanie 100 rekordów...")
+            await page.wait_for_timeout(5000)
+
+            # 4. POBIERAMY FINALNĄ TABELĘ
             content = await page.content()
-            
-            print("Konwertuję dane...")
-            # Szukamy tabeli w całym kodzie strony
             dfs = pd.read_html(io.StringIO(content))
+            df = next(d for d in dfs if 'Rank' in d.columns)
             
-            # Wybieramy tabelę, która ma kolumnę 'Rank' (to ta właściwa)
-            ladder_df = next(df for df in dfs if 'Rank' in df.columns)
+            # Czyszczenie i zapis
+            df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+            df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
             
-            # Czyścimy zbędne kolumny (ikony/puste)
-            ladder_df = ladder_df.loc[:, ~ladder_df.columns.str.contains('^Unnamed')]
-            
-            # Zapisujemy do TSV
-            ladder_df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
-            
-            print(f"SUKCES! Zapisano kolumny: {list(ladder_df.columns)}")
+            print(f"SUKCES! Zapisano {len(df)} rekordów. Kolumny: {list(df.columns)}")
 
         except Exception as e:
-            print(f"WYJĄTEK: {e}")
-            await page.screenshot(path="data/final_debug.png")
+            print(f"BŁĄD: {e}")
+            await page.screenshot(path="data/error_final_steps.png")
             exit(1)
         finally:
             await browser.close()
