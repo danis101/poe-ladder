@@ -6,25 +6,22 @@ import os
 
 async def run():
     async with async_playwright() as p:
-        # Tworzymy folder data, jeśli nie istnieje
         if not os.path.exists('data'): 
             os.makedirs('data')
         
-        # Uruchamiamy przeglądarkę
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(viewport={'width': 1920, 'height': 1080})
+        # Ustawiamy standardową rozdzielczość
+        context = await browser.new_context(viewport={'width': 1280, 'height': 720})
         page = await context.new_page()
         
         try:
-            print("Wchodzę na stronę drabinki...")
-            # Wchodzimy na stronę i czekamy na załadowanie podstawowej struktury
+            print("Otwieram stronę drabinki...")
             await page.goto("https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo&limit=100", wait_until="load")
             
-            # Krótka pauza na załadowanie skryptów PoE
-            await page.wait_for_timeout(2000)
+            # Czekamy na załadowanie skryptów
+            await page.wait_for_timeout(3000)
 
-            # WYMUSZENIE: Odznaczamy checkbox 'Hide Delve Depth' bezpośrednio przez JavaScript
-            print("Odznaczam 'Hide Delve Depth' przez JS...")
+            print("Wymuszam odznaczenie 'Hide Delve Depth' przez JS...")
             await page.evaluate("""
                 const cb = document.querySelector('input[name="hide_delve"]');
                 if (cb) {
@@ -33,35 +30,37 @@ async def run():
                 }
             """)
             
-            # CZEKANIE: To jest kluczowy moment - czekamy aż w nagłówku tabeli pojawi się tekst 'Depth'
-            # timeout 15s jest bezpieczny, strona zazwyczaj reaguje w 1-2s
-            print("Czekam na dociągnięcie kolumn Delve...")
-            await page.wait_for_selector('th:has-text("Depth")', timeout=15000)
+            # CZEKANIE: Sprawdzamy stan 'attached' (obecność w kodzie), a nie 'visible'
+            print("Czekam na pojawienie się kolumny Depth w kodzie HTML...")
+            depth_header = page.locator('th:has-text("Depth")').first
+            await depth_header.wait_for(state="attached", timeout=20000)
 
-            # POBIERANIE: Skoro 'Depth' już jest w DOM, pobieramy całą tabelę
-            print("Pobieram tabelę z danymi...")
+            # Dodatkowa sekunda na wyrenderowanie danych wierszy
+            await page.wait_for_timeout(2000)
+
+            print("Pobieram tabelę...")
+            # Pobieramy HTML bezpośrednio z DOM
             table_html = await page.evaluate("document.querySelector('table.ladderTable').outerHTML")
             
             if table_html:
-                # Używamy Pandas do szybkiej konwersji HTML na DataFrame
+                # Konwersja na DataFrame
                 df = pd.read_html(io.StringIO(table_html))[0]
                 
-                # Czyścimy puste kolumny (np. te z ikonami, które Pandas czyta jako puste)
-                df = df.dropna(axis=1, how='all')
+                # Usuwamy kolumny bez nazw (ikony itp.)
+                df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
                 
-                # Zapisujemy do TSV (lepszy format dla danych z PoE niż zwykły CSV)
+                # Zapisujemy do TSV
                 df.to_csv('data/keepers-delve.tsv', sep='\t', index=False)
                 
-                print(f"SUKCES! Zapisano {len(df)} wierszy.")
-                print(f"Nagłówki w pliku: {list(df.columns)}")
+                print(f"SUKCES! Plik zapisany. Znalezione kolumny: {list(df.columns)}")
             else:
-                print("BŁĄD: Tabela nie została znaleziona w kodzie strony.")
+                print("BŁĄD: Nie znaleziono tabeli.")
                 exit(1)
 
         except Exception as e:
-            print(f"WYJĄTEK podczas pracy bota: {e}")
-            # W razie błędu robimy zrzut ekranu, żeby wiedzieć co widział bot
-            await page.screenshot(path="data/final_error_debug.png")
+            print(f"WYJĄTEK: {e}")
+            # Zapisujemy screena dla 100% pewności
+            await page.screenshot(path="data/final_debug.png")
             exit(1)
         finally:
             await browser.close()
