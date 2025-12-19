@@ -25,7 +25,15 @@ jobs:
       - name: Run script
         run: python update_ladder.py
 
+      - name: Upload Debug Screenshot
+        if: always() # To sprawi, że wyśle screena nawet jak będzie błąd
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: data/*.png
+
       - name: Commit and push
+        if: success() # Tylko jeśli skrypt zadziałał
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
