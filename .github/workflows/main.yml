@@ -22,8 +22,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas playwright lxml beautifulsoup4
-          playwright install chromium
+          pip install pandas playwright lxml beautifulsoup4 playwright-stealth
+          playwright install --with-deps chromium
 
       - name: Run scraper
         run: python update_ladder.py
