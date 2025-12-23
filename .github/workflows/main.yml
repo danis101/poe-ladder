@@ -1,9 +1,9 @@
 name: Update PoE Ladder
 
 on:
-# schedule:
-#   - cron: '0 */6 * * *'  # Automat tymczasowo wyłączony
-  workflow_dispatch:        # Pozwala na ręczne uruchomienie przyciskiem
+  schedule:
+    - cron: '0 */2 * * *'  # Odpala co 2 godziny (00:00, 02:00, itd.)
+  workflow_dispatch:      # Pozwala na ręczne uruchomienie
 
 jobs:
   scrape:
@@ -20,10 +20,9 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Wait for random time
-        # GitHub Actions czasami blokuje przez idealną punktualność. 
-        # Ten krok poczeka od 1 do 60 sekund przed startem.
-        run: sleep $((1 + RANDOM % 60))
+      - name: Random delay
+        # Losowe opóźnienie od 1 do 300 sekund (5 minut)
+        run: sleep $((1 + RANDOM % 300))
 
       - name: Install dependencies
         run: |
@@ -46,5 +45,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add data/keepers-delve.tsv
-          git commit -m "Update ladder data" || echo "No changes to commit"
+          git commit -m "Auto-update ladder: $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
           git push
