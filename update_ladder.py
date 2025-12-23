@@ -1,6 +1,6 @@
 import asyncio
 from playwright.async_api import async_playwright, TimeoutError
-from playwright_stealth import stealth_async  # <--- WAŻNE
+from playwright_stealth.stealth import stealth_async  # <--- WAŻNE
 import pandas as pd
 import io
 import os
