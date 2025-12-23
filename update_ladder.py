@@ -1,6 +1,6 @@
 import asyncio
 from playwright.async_api import async_playwright, TimeoutError
-from playwright_stealth.stealth import stealth_async  # <--- POPRAWIONY IMPORT
+import playwright_stealth  # <-- ZMIANA: importujemy cały moduł
 import pandas as pd
 import io
 import os
@@ -29,7 +29,9 @@ async def run():
         )
 
         page = await context.new_page()
-        await stealth_async(page)
+        
+        # ZMIANA: Wywołanie stealth w sposób bezpieczny
+        await playwright_stealth.stealth_async(page)
 
         try:
             print("Wchodzę na stronę...")
@@ -41,28 +43,39 @@ async def run():
             await page.mouse.wheel(0, 400)
             await asyncio.sleep(1)
 
-            if "Are you human" in await page.content() or await page.locator("text=Verify you are human").count() > 0:
-                print("Cloudflare wykryty. Robię screen...")
+            # Sprawdzenie blokady
+            content_html = await page.content()
+            if "Are you human" in content_html or await page.locator("text=Verify you are human").count() > 0:
+                print("Cloudflare wykryty. Robię zrzut ekranu...")
                 await page.screenshot(path="data/cloudflare_detected.png", full_page=True)
                 return
 
             print("Konfiguruję tabelę...")
+            # Czekamy na checkbox
             hide_depth_checkbox = page.get_by_label("Hide Delve Depth")
-            await hide_depth_checkbox.wait_for(state="visible", timeout=10000)
+            await hide_depth_checkbox.wait_for(state="visible", timeout=15000)
             await hide_depth_checkbox.uncheck()
             
             await asyncio.sleep(2)
+            # Sortowanie po Depth
             await page.locator('th[data-sort="depth"]').click()
             await asyncio.sleep(2)
 
             print("Przełączam na TOP 100...")
-            await page.locator("text=20").first.click()
-            await asyncio.sleep(1)
-            await page.locator("text=100").first.click()
+            # Próba kliknięcia w selektor ilości rekordów
+            try:
+                await page.locator(".view-count-select").first.click()
+                await asyncio.sleep(1)
+                await page.get_by_text("100", exact=True).first.click()
+            except:
+                await page.locator("text=20").first.click()
+                await asyncio.sleep(1)
+                await page.locator("text=100").first.click()
 
+            # Czekamy aż tabela urośnie do 100 wierszy
             await page.wait_for_function(
                 "document.querySelectorAll('table tbody tr').length >= 100",
-                timeout=15000
+                timeout=20000
             )
 
             print("Zgrywam dane...")
