@@ -2,8 +2,8 @@ name: Update PoE Ladder
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # Odpala co 2 godziny (00:00, 02:00, itd.)
-  workflow_dispatch:      # Pozwala na ręczne uruchomienie
+    - cron: '0 */2 * * *'  # Co 2 godziny
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -20,30 +20,23 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Random delay
-        # Losowe opóźnienie od 1 do 300 sekund (5 minut)
-        run: sleep $((1 + RANDOM % 300))
+      - name: Random jitter
+        # Minimalna losowość (max 15 sek) żeby nie "wisieć"
+        run: sleep $((1 + RANDOM % 15))
 
       - name: Install dependencies
         run: |
-          pip install pandas playwright lxml beautifulsoup4
-          playwright install --with-deps chromium
+          pip install pandas playwright lxml
+          # Instalacja tylko Chromium (bez wszystkich silników) oszczędza czas
+          playwright install chromium --with-deps
 
       - name: Run scraper
         run: python update_ladder.py
-
-      - name: Upload Debug Screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshots
-          path: data/*.png
-          if-no-files-found: ignore
 
       - name: Commit and push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add data/keepers-delve.tsv
-          git commit -m "Auto-update ladder: $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
+          git commit -m "Update ladder data" || exit 0
           git push
