@@ -1,5 +1,5 @@
 import asyncio
-from playwright.async_api import async_playwright, TimeoutError
+from playwright.async_api import async_playwright
 import pandas as pd
 import io
 import os
@@ -9,11 +9,20 @@ URL = "https://www.pathofexile.com/ladders/league/Keepers?type=depthsolo"
 
 async def run():
     async with async_playwright() as p:
-        os.makedirs("data", exist_ok=True)
+        # Upewniamy się, że folder data istnieje
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(base_dir, "data")
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
 
+        # HEADLESS=TRUE pod GitHub Actions
         browser = await p.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+            headless=True, 
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox"
+            ]
         )
 
         context = await browser.new_context(
@@ -22,67 +31,60 @@ async def run():
         )
 
         page = await context.new_page()
-
-        # Ukrywamy ślady automatyzacji
+        # Ukrywamy fakt, że to automat
         await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         try:
             print("Wchodzę na stronę...")
             await page.goto(URL, wait_until="networkidle", timeout=60000)
-            
-            # --- SYMULACJA LUDZKIEGO ZACHOWANIA PRZED KLIKNIĘCIEM ---
-            await asyncio.sleep(random.uniform(3, 5))
-            await page.mouse.wheel(0, 300) # Lekki scroll w dół
-            await asyncio.sleep(1)
-            await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-            # -------------------------------------------------------
+            await asyncio.sleep(5)
 
             print("Konfiguruję tabelę (Depth)...")
-            depth_checkbox = page.get_by_label("Hide Delve Depth")
-            await depth_checkbox.wait_for(state="visible", timeout=15000)
-            
-            # Klikamy z losowym opóźnieniem
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            await depth_checkbox.uncheck()
+            try:
+                await page.get_by_label("Hide Delve Depth").uncheck(timeout=5000)
+            except:
+                print("Nie udało się odznaczyć labela, próba kliknięcia bezpośredniego...")
+                await page.click("text=Hide Delve Depth")
             
             await asyncio.sleep(2)
             await page.locator('th[data-sort="depth"]').click()
-            await asyncio.sleep(3)
+            print("Sortowanie Depth ustawione.")
+            await asyncio.sleep(5)
 
-            print("Przełączam na TOP 100 (wolna interakcja)...")
-            # Zamiast gwałtownego kliknięcia, najeżdżamy i klikamy
-            selector_20 = page.locator("text=20").first
-            await selector_20.hover()
-            await asyncio.sleep(random.uniform(0.5, 1.2))
-            await selector_20.click()
+            # --- ZMIANA NA 100 REKORDÓW (perPageOptions) ---
+            print("Zmieniam widok na 100 rekordów...")
+            target_selector = "select.perPageOptions"
             
-            await asyncio.sleep(random.uniform(1, 2))
+            # W trybie headless musimy upewnić się, że element jest w zasięgu
+            await page.locator(target_selector).scroll_into_view_if_needed()
+            await page.select_option(target_selector, "100")
             
-            selector_100 = page.get_by_text("100", exact=True).first
-            await selector_100.hover()
-            await asyncio.sleep(random.uniform(0.5, 1.0))
-            await selector_100.click()
+            print("Czekam na przeładowanie tabeli...")
+            # Sprawdzanie czy wiersze się dociągnęły
+            for i in range(15):
+                await asyncio.sleep(2)
+                count = await page.locator("table.ladderTable tbody tr").count()
+                print(f"Liczba rekordów w tabeli: {count}")
+                if count >= 100:
+                    break
 
-            print("Czekam na przeładowanie danych...")
-            # Zwiększony timeout na dociągnięcie większej tabeli
-            await page.wait_for_function(
-                "document.querySelectorAll('table tbody tr').length >= 100",
-                timeout=30000
-            )
-
+            # --- ZGRYWANIE DANYCH ---
             print("Zgrywam dane...")
-            content = await page.content()
-            dfs = pd.read_html(io.StringIO(content))
+            html_content = await page.content()
+            dfs = pd.read_html(io.StringIO(html_content))
             df = next(d for d in dfs if "Rank" in d.columns)
+            
             df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
-
-            df.to_csv("data/keepers-delve.tsv", sep="\t", index=False)
-            print(f"Sukces! Pobrano {len(df)} rekordów.")
-            await page.screenshot(path="data/final_success.png")
+            
+            output_path = os.path.join(data_dir, "keepers-delve.tsv")
+            df.to_csv(output_path, sep="\t", index=False)
+            
+            print(f"SUKCES! Zapisano {len(df)} rekordów w {output_path}")
 
         except Exception as e:
-            print(f"Błąd: {e}")
-            await page.screenshot(path="data/error_state.png", full_page=True)
+            print(f"Błąd krytyczny: {e}")
+            # W GitHub Actions screenshoty zapisujemy do folderu data, żeby móc je pobrać z artefaktów
+            await page.screenshot(path=os.path.join(data_dir, "error.png"))
         finally:
             await browser.close()
 
