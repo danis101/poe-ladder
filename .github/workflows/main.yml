@@ -21,9 +21,9 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: |
-          pip install pandas playwright lxml beautifulsoup4 playwright-stealth
-          playwright install --with-deps chromium
+          run: |
+            pip install pandas playwright lxml beautifulsoup4 playwright-stealth
+            playwright install --with-deps chromium
 
       - name: Run scraper
         run: python update_ladder.py
